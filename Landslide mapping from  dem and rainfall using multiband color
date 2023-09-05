@@ -1,0 +1,67 @@
+import numpy as np
+import rasterio
+from rasterio.enums import Resampling
+
+# Read the DEM file
+dem = rasterio.open("Bandarban_Dem.tif")
+
+# Read the rainfall file and resample to match the DEM resolution
+rainfall = rasterio.open("Extract_Rain1.tif")
+rainfall_data = rainfall.read(
+    out_shape=(rainfall.count, dem.height, dem.width),
+    resampling=Resampling.bilinear
+)
+
+# Get the DEM data
+data = dem.read(1)  # Read the first band (assuming it contains elevation values)
+
+# Create a new array to store the landslide susceptibility values
+susceptibility = np.zeros_like(data, dtype=np.uint8)
+
+# Define the thresholds for elevation, slope, and rainfall
+elevation_threshold = 100
+slope_threshold = 0.628319  # Approximately 36 degrees in radians
+rainfall_threshold = 100
+
+# Loop over each pixel in the DEM
+for i in range(data.shape[0]):
+    for j in range(data.shape[1]):
+        # Calculate the slope of the terrain at the current pixel
+        if i > 0 and i < data.shape[0] - 1 and j > 0 and j < data.shape[1] - 1:
+            dz_dx = (data[i, j + 1] - data[i, j - 1]) / (2 * dem.transform.a)
+            dz_dy = (data[i - 1, j] - data[i + 1, j]) / (2 * dem.transform.e)
+            slope = np.arctan(np.sqrt(dz_dx ** 2 + dz_dy ** 2))
+        else:
+            slope = 0.0
+
+        # If the slope is greater than the threshold and rainfall is above the threshold,
+        # assign the Likert scale value based on slope
+        if np.degrees(slope) > 36 and rainfall_data[0, i, j] > rainfall_threshold:
+            if data[i, j] < elevation_threshold:
+                susceptibility[i, j] = 1  # Low
+            elif data[i, j] < 2 * elevation_threshold:
+                susceptibility[i, j] = 2  # Moderate
+            else:
+                susceptibility[i, j] = 3  # High
+
+# Define the output file path
+output_file = "landslide_susceptibility.tif"
+
+# Create the output file
+with rasterio.open(
+    output_file,
+    'w',
+    driver='GTiff',
+    height=susceptibility.shape[0],
+    width=susceptibility.shape[1],
+    count=1,
+    dtype=susceptibility.dtype,
+    crs=dem.crs,
+    transform=dem.transform,
+) as dst:
+    # Write the susceptibility data to the output file
+    dst.write(susceptibility, 1)
+
+# Close the DEM and rainfall files
+dem.close()
+rainfall.close()
